@@ -1480,7 +1480,7 @@ class GSV_pano(object):
         fov_h = math.radians(fov_h_deg)
         fov_v = math.atan((height * math.tan((fov_h / 2)) / width)) * 2
 
-        DI = np.ones((height * width, 3), np.int)
+        DI = np.ones((height * width, 3), np.int64)
 
         # matrix to spherical coordinates
         trans = np.array([[2. * np.tan(fov_h / 2) / float(width), 0., -np.tan(fov_h / 2)],
@@ -1493,7 +1493,7 @@ class GSV_pano(object):
         DI[:, 0] = xx.reshape(height * width)
         DI[:, 1] = yy.reshape(height * width)
 
-        v = np.ones((height * width, 3), np.float)
+        v = np.ones((height * width, 3), np.float64)
 
         v[:, :2] = np.dot(DI, trans.T)  # to spherical coordinates
         v = np.dot(v, m.T)
@@ -1502,21 +1502,21 @@ class GSV_pano(object):
         theta = np.pi / 2 - np.arctan2(v[:, 1], diag)
         phi = np.arctan2(v[:, 0], v[:, 2]) + np.pi
 
-        ey = np.rint(theta * base_height / np.pi).astype(np.int)
-        ex = np.rint(phi * base_width / (2 * np.pi)).astype(np.int)
+        ey = np.rint(theta * base_height / np.pi).astype(np.int64)
+        ex = np.rint(phi * base_width / (2 * np.pi)).astype(np.int64)
 
         ex[ex >= base_width] = base_width - 1
         ey[ey >= base_height] = base_height - 1
 
         new_img[DI[:, 1], DI[:, 0]] = img[ey, ex]
 
-        basename = f'{self.panoId}_{int(math.degrees(to_theta))}_{int(math.degrees(to_phi))}_{int(math.degrees(pitch))}.jpg'
-        new_name = os.path.join(self.saved_path, basename)
-
-        if len(img.shape) == 3:
-            cv2.imwrite(new_name,  cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR))
-        if len(img.shape) == 2:
-            cv2.imwrite(new_name.replace(".jpg", ".tif"), new_img)
+        if self.saved_path:
+            basename = f'{self.panoId}_{int(math.degrees(to_theta))}_{int(math.degrees(to_phi))}_{int(math.degrees(pitch))}.jpg'
+            new_name = os.path.join(self.saved_path, basename)
+            if len(img.shape) == 3:
+                cv2.imwrite(new_name,  cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR))
+            if len(img.shape) == 2:
+                cv2.imwrite(new_name.replace(".jpg", ".tif"), new_img)
 
         return new_img
 
@@ -1597,15 +1597,44 @@ class GSV_pano(object):
             print(url1)
             return 0, 0
 
-    def clip_depthmap(self, to_theta=0, to_phi=0, width=1024, height=768, fov_h_deg=90, zoom=5, img_type="depthmap",
-                  saved_path=os.getcwd()):
-        if img_type == "pano":
+    def clip_depthmap(self, to_theta=0, to_phi=0, width=1024, height=768, fov_h_deg=90, zoom=0, img_type="depthmap",
+                  saved_path="", equirect=None):
+        """Perspective-project an equirectangular layer at the same view
+        pose used by `getImagefrmAngle`.
+
+        Parameters
+        ----------
+        img_type : {"pano", "depthmap", "ground_mask"}
+            Which built-in equirectangular layer to project. Ignored when
+            `equirect` is provided.
+        equirect : np.ndarray, optional
+            Project a caller-supplied equirectangular array (e.g. a
+            segmentation map). Must be 2-D or 3-D. When given, `img_type`
+            is ignored.
+        zoom : int
+            For "pano": pano image zoom (higher = bigger). For "depthmap"
+            and "ground_mask": only the equirectangular's relative shape
+            matters, so the default 0 (256x512 native) is fine — saving
+            ~130x of memory vs the previous default of 5.
+        saved_path : str
+            Where to write the clipped output. Pass "" to skip the disk
+            write entirely (often what you want when you just need the
+            array in memory).
+        """
+        if equirect is not None:
+            img = np.asarray(equirect)
+        elif img_type == "pano":
             img = self.get_panorama(zoom=zoom)['image']
-        if img_type == "depthmap":
+        elif img_type == "depthmap":
             img = self.get_depthmap(zoom=zoom)['depthMap']
-            pano_h, pano_w = self.jdata['Data']['level_sizes'][zoom][0]
-            img = Image.fromarray(img).resize((pano_w, pano_h), Image.BILINEAR)
-            img = np.array(img)
+            img = np.asarray(img, dtype=np.float32)
+        elif img_type == "ground_mask":
+            img = self.get_depthmap(zoom=zoom)['ground_mask']
+            img = np.asarray(img, dtype=np.uint8)
+        else:
+            raise ValueError(f"unknown img_type {img_type!r}; "
+                              f"expected pano, depthmap, ground_mask, or "
+                              f"pass equirect=<np.ndarray>")
 
         self.saved_path = saved_path
 
@@ -1629,22 +1658,21 @@ class GSV_pano(object):
 
         if len(img.shape) == 3:
             base_height, base_width, channel = img.shape
-
-        if len(img.shape) == 2:
+        else:
             base_height, base_width = img.shape
             channel = 1
 
         # height = int(round(width * np.tan(fov_v / 2) / np.tan(fov_h / 2), 0))
 
         if len(img.shape) == 3:
-            new_img = np.zeros((height, width, channel), np.uint8)
-        if len(img.shape) == 2:
-            new_img = np.zeros((height, width))
+            new_img = np.zeros((height, width, channel), img.dtype)
+        else:
+            new_img = np.zeros((height, width), img.dtype)
 
         fov_h = math.radians(fov_h_deg)
         fov_v = math.atan((height * math.tan((fov_h / 2)) / width)) * 2
 
-        DI = np.ones((height * width, 3), np.int)
+        DI = np.ones((height * width, 3), np.int64)
         trans = np.array([[2. * np.tan(fov_h / 2) / float(width), 0., -np.tan(fov_h / 2)],
                           [0., -2. * np.tan(fov_v / 2) / float(height), np.tan(fov_v / 2)]])
 
@@ -1653,7 +1681,7 @@ class GSV_pano(object):
         DI[:, 0] = xx.reshape(height * width)
         DI[:, 1] = yy.reshape(height * width)
 
-        v = np.ones((height * width, 3), np.float)
+        v = np.ones((height * width, 3), np.float64)
 
         v[:, :2] = np.dot(DI, trans.T)
         v = np.dot(v, m.T)
@@ -1662,21 +1690,21 @@ class GSV_pano(object):
         theta = np.pi / 2 - np.arctan2(v[:, 1], diag)
         phi = np.arctan2(v[:, 0], v[:, 2]) + np.pi
 
-        ey = np.rint(theta * base_height / np.pi).astype(np.int)
-        ex = np.rint(phi * base_width / (2 * np.pi)).astype(np.int)
+        ey = np.rint(theta * base_height / np.pi).astype(np.int64)
+        ex = np.rint(phi * base_width / (2 * np.pi)).astype(np.int64)
 
         ex[ex >= base_width] = base_width - 1
         ey[ey >= base_height] = base_height - 1
 
         new_img[DI[:, 1], DI[:, 0]] = img[ey, ex]
 
-        basename = f'{self.panoId}_{int(math.degrees(to_theta))}_{int(math.degrees(to_phi))}_{int(math.degrees(pitch))}.jpg'
-        new_name = os.path.join(self.saved_path, basename)
-
-        if len(img.shape) == 3:
-            cv2.imwrite(new_name, cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR))
-        if len(img.shape) == 2:
-            cv2.imwrite(new_name.replace(".jpg", ".tif"), new_img)
+        if self.saved_path:
+            basename = f'{self.panoId}_{int(math.degrees(to_theta))}_{int(math.degrees(to_phi))}_{int(math.degrees(pitch))}.jpg'
+            new_name = os.path.join(self.saved_path, basename)
+            if len(img.shape) == 3:
+                cv2.imwrite(new_name, cv2.cvtColor(new_img, cv2.COLOR_RGB2BGR))
+            else:
+                cv2.imwrite(new_name.replace(".jpg", ".tif"), new_img)
 
         return new_img
 
