@@ -75,3 +75,8 @@ An example of tree diameter measurement using street view images.
 Please feel free to contact me if you have any questions!
 
 Note: Gooogle Street View image depthmap have mostly replaced by a "fake" flat plain and the camera height (nadir) is replaced using a placeholder of 2.5 meters. A few new camera used in 2025 with 16k panorama width may use the "real" ground depthmap. We will continue watch these changes. -- 2029-09-29
+
+# Street View request and answer reference (2026-09-29)
+- [docs/GSV_API_REFERENCE.md](docs/GSV_API_REFERENCE.md): every URL setting SIM sends to Google Street View and every field of the answer, tested one part at a time, including the hidden per-pixel label picture (road, building, tree, pole ...) and the click-to-go map.
+- [docs/GSV_FINDINGS_20260929.md](docs/GSV_FINDINGS_20260929.md): how this was found out and what was learned (tilt numbers, made-up depth-map ground, label picture accuracy, more photos in the neighbour list).
+- Bug fixes in `gsv_pano/utils.py` and `gsv_pano/pano.py` are marked `# Fix (2026-09-29)`; optional new modules `gsv_pano/photometa.py` and `gsv_pano/gsv_pb.py` build the requests by name and parse every field. Tests: `python -m pytest tests -q`.
