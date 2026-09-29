@@ -30,6 +30,9 @@ logging.basicConfig(filename="info.log", level=logging.INFO, format="%(asctime)s
 logging.shutdown()
 
 def refactorJson(jdata):
+    # jdata is the "photometa" answer: nested lists without field names; the record is m = jdata[1][0]
+    # and m5 = m[5][0].  Every position used below is explained in docs/GSV_API_REFERENCE.md
+    # (tested 2026-09-29).
     newJson = {}
 
     if len(str(jdata)) < 1000:
@@ -54,6 +57,7 @@ def refactorJson(jdata):
             newJson['Data']['tile_height'] = jdata[1][0][2][3][1][1]
             newJson['Data']['level_sizes'] = jdata[1][0][2][3][0]
             newJson['Data']['image_date'] = jdata[1][0][6][7]
+            # m[0][0] is the kind of answer (1 for this request, 3 for Google's own web page), not indoor/outdoor.
             newJson['Data']['imagery_type'] =  jdata[1][0][0][0]
             newJson['Data']['copyright'] =  jdata[1][0][4][0][0][0][0]
         except Exception as e:
@@ -68,6 +72,12 @@ def refactorJson(jdata):
             newJson['Location']['original_lat'] = ''
             newJson['Location']['original_lng'] = ''
             newJson['Location']['elevation_wgs84_m'] = ""
+            # Fix (2026-09-29): the answer does carry the ellipsoid (WGS84) height at m5[1][1][2]
+            # (= the EGM96 elevation minus the local geoid height, e.g. about 32.5 m less in New York).
+            try:
+                newJson['Location']['elevation_wgs84_m'] = float(jdata[1][0][5][0][1][1][2])
+            except (IndexError, TypeError, ValueError):
+                pass
         except Exception as e:
             # print("Error in obtain new Json['Location']:", e)
             print("Error in obtain new Json['Location']:", e, newJson['Location']['panoId'])
@@ -86,6 +96,9 @@ def refactorJson(jdata):
         # Projection
         try:
             newJson['Projection']['projection_type'] = 'spherical'
+            # m5[1][2] = [heading, pitch + 90, roll] in degrees.  The key names below come from Google's older
+            # JSON; tilt_yaw_deg holds pitch + 90 (90 = level) and tilt_pitch_deg holds the roll.  Checked
+            # 2026-09-29: (value - 90) follows the road slope ahead (r = +0.74, 4,014 NYC photos).
             newJson['Projection']['pano_yaw_deg'] =    float(jdata[1][0][5][0][1][2][0])  # z axis, yaw
             newJson['Projection']['tilt_yaw_deg'] =    float(jdata[1][0][5][0][1][2][1])   # y-axis, pitch
             newJson['Projection']['tilt_pitch_deg'] =  float(jdata[1][0][5][0][1][2][2])    # x-axis, roll
@@ -104,7 +117,12 @@ def refactorJson(jdata):
         newJson['Time_machine'] = getTimeMachine(jdata)
 
         # model
-        newJson['model']['depth_map'] = jdata[1][0][5][0][5][1][2]
+        # Fix (2026-09-29): a photo without a depth map used to raise here and skip the country,
+        # description and region below; read it on its own.
+        try:
+            newJson['model']['depth_map'] = jdata[1][0][5][0][5][1][2]
+        except (IndexError, TypeError) as e:
+            print("No depth map in refactorJson():", e)
 
         newJson['Location']['country'] = ""
         newJson['Location']['description'] = ""
@@ -146,28 +164,44 @@ def getTimeMachine(jdata):
         if dates is None:
             return timemachine_list
 
+        # Fix (2026-09-29): read each date on its own.  Some history entries are photo spheres uploaded by
+        # the public (ids "CIHM0og...", "CIABIh...", photo type 10) that have no elevation or no heading;
+        # one of them used to raise and silently drop every later date, including Google's own photos
+        # (seen in 6 of 3,000 NYC answers, e.g. a 2024 photo lost after a 2017 photo sphere).  Missing
+        # values are now None.
+        # Note: 'yaw_deg' holds pitch + 90 (90 = level) and 'pitch_deg' holds the roll (see refactorJson).
+        def _get(obj, *path):
+            for p in path:
+                if not isinstance(obj, list) or p >= len(obj) or obj[p] is None:
+                    return None
+                obj = obj[p]
+            return obj
+
         for day in dates:
-            old_pano_dict = {}
-            idx = day[0]
+            try:
+                old_pano_dict = {}
+                idx = day[0]
 
-            raw_pano_info = pano_list[idx]
+                raw_pano_info = pano_list[idx]
 
-            old_pano_dict['panoId'] = raw_pano_info[0][1]
-            old_pano_dict['image_date'] = day[1]
+                old_pano_dict['panoId'] = raw_pano_info[0][1]
+                old_pano_dict['image_date'] = day[1]
 
-            old_pano_dict["lng"] = raw_pano_info[2][0][3]
-            old_pano_dict['lat'] = raw_pano_info[2][0][2]
-            old_pano_dict['elevation_egm96_m'] = raw_pano_info[2][1][0]
+                old_pano_dict["lng"] = _get(raw_pano_info, 2, 0, 3)
+                old_pano_dict['lat'] = _get(raw_pano_info, 2, 0, 2)
+                old_pano_dict['elevation_egm96_m'] = _get(raw_pano_info, 2, 1, 0)
 
-            old_pano_dict['heading_deg'] = raw_pano_info[2][2][0]
-            old_pano_dict['yaw_deg'] = raw_pano_info[2][2][1]
-            old_pano_dict['pitch_deg'] = raw_pano_info[2][2][2]
+                old_pano_dict['heading_deg'] = _get(raw_pano_info, 2, 2, 0)
+                old_pano_dict['yaw_deg'] = _get(raw_pano_info, 2, 2, 1)
+                old_pano_dict['pitch_deg'] = _get(raw_pano_info, 2, 2, 2)
 
-            old_pano_dict['description'] = ''
-            if len(raw_pano_info) == 4:
-                old_pano_dict['description'] = raw_pano_info[3][2][0][0]
+                old_pano_dict['description'] = ''
+                if len(raw_pano_info) == 4:
+                    old_pano_dict['description'] = _get(raw_pano_info, 3, 2, 0, 0) or ''
 
-            timemachine_list.append(old_pano_dict)
+                timemachine_list.append(old_pano_dict)
+            except Exception as e:
+                logging.info("Skipped one Time_machine entry in getTimeMachine(): %s", e)
             # print(link_dict)
         return timemachine_list
 
@@ -204,9 +238,12 @@ def getLinks(jdata):
         return link_list
 
     except Exception as e:
+        # Fix (2026-09-29): link_dict does not exist yet when the error comes before the first link (for
+        # example a photo without road links, m5[6] = None); logging it raised a second error that escaped
+        # getLinks() and made refactorJson() stop early.
         logging.exception("Error in getLinks().")
-        logging.exception(link_dict['panoId'])
-        logging.exception(jdata_links)
+        logging.exception(locals().get('link_dict', {}).get('panoId'))
+        logging.exception(locals().get('jdata_links'))
         return link_list
 
 # def sort_pano_links(links_dict):
@@ -263,7 +300,14 @@ def getLinks(jdata):
 def compressJson(jdata):
 
     try:
-        del jdata[1][0][5][0][5][3][2]
+        # jdata[1][0][5][0][5][3] is not a second depth map: it is Street View's click-to-go map (for each
+        # pixel, the neighbouring photo to jump to).  It is removed to save space.
+        # Fix (2026-09-29): when a photo has no click-to-go map the del raised, and the depth map below was
+        # then stored uncompressed, which parse() cannot read later.
+        try:
+            del jdata[1][0][5][0][5][3][2]
+        except (IndexError, TypeError):
+            pass
 
         # cannot compress it yet. The following code works fine, but cannot store the base64 string in the json.
         # print("len(jdata[1][0][5][0][5][1][2]):", len(jdata[1][0][5][0][5][1][2]))

@@ -196,6 +196,12 @@ class GSV_pano(object):
 
 
     def getPanoIDfrmLonlat(self, lon, lat):
+        # "pb" = a nested request flattened as !<field><type><value> (m = group of the next k pieces,
+        # s = text, e = choice, b = yes/no, d = decimal); see docs/GSV_API_REFERENCE.md.  Here:
+        # !3d/!4d = latitude/longitude; !2d50 = search radius in metres (a hard limit: nothing within it
+        # = no photo); !11m4!1m3!1e2... = photo types allowed (2 = Google's own; adding type 3 or 10 would
+        # also return photo spheres uploaded by the public); !4m10!1e1... = which blocks of the record to
+        # send.  The answer already holds the full photo record.
         url = "https://maps.googleapis.com/maps/api/js/GeoPhotoService.SingleImageSearch?pb=!1m5!1sapiv3!5sUS!11m2!1m1!1b0!2m4!1m2!3d{0:}!4d{1:}!2d50!3m10!2m2!1sen!2sGB!9m1!1e2!11m4!1m3!1e2!2b1!3e2!4m10!1e1!1e2!1e3!1e4!1e8!1e6!5m1!1e2!6m1!1e2&callback=_xdc_._v2mub5"
         
         url = url.format(lat, lon)
@@ -213,7 +219,7 @@ class GSV_pano(object):
                 pano_lon = jdata[1][5][0][1][0][3]
                 pano_lat = jdata[1][5][0][1][0][2]
                 return panoId, pano_lon, pano_lat
-            except:
+            except Exception as e:  # Fix (2026-09-29): was a bare "except:", so "e" was math.e (from "from math import *") and the log showed 2.718... instead of the error
                 logging.exception("Error in getPanoIDfrmLonlat(): %s", e)
                 return 0, 0, 0
 
@@ -245,6 +251,23 @@ class GSV_pano(object):
                 return jdata
 
         # if override the existing json file
+        # The "photometa" request (tested part by part on 2026-09-29, see docs/GSV_API_REFERENCE.md):
+        #   hl=en            language of the address and street names in the answer
+        #   !1smaps_sv.tactile  client name (must be one Google knows)
+        #   !2m2!1szh-CN!2sus   language/region; they only change which nearby places are listed
+        #   !3m3!1m2!1e2!2s{}   photo type + id: 2 = Google's own photo.  Photo spheres uploaded by the public
+        #                       (ids "CIHM0og...", "CIABIh...", also listed in Time_machine) need type 10
+        #                       (!1e10); with 2 Google returns an empty answer and refactorJson() gives "".
+        #   !4m57!1e1...!1e12   blocks to send: 1 image sizes, 2 address/date, 3 copyright, 4 (no visible
+        #                       effect), 5 nearby places, 6 neighbours + depth map + links + history,
+        #                       8 street names, 12 a flag.  Adding !1e18 (and adding 1 to the 57) would
+        #                       also send Google's 512 x 256 per-pixel label picture (road, building,
+        #                       tree ...), see the docs.
+        #   !2m1!1e1          how much of the surroundings: 1 = all neighbours (0 = road links only, 2 = none)
+        #   !4m1!1i48         pixel size of the uploader's picture link
+        #   !5m1!1e1!5m1!1e2  depth map (kind 2 is the plane depth map)
+        #   !6m1!1e1!6m1!1e2  click-to-go map (not depth; removed again by compressJson)
+        #   !9m36...          photo-type filters; no visible effect in tests
         url = "https://www.google.com/maps/photometa/v1?authuser=0&hl=en&pb=!1m4!1smaps_sv.tactile!11m2!2m1!1b1!2m2!1szh-CN!2sus!3m3!1m2!1e2!2s{}!4m57!1e1!1e2!1e3!1e4!1e5!1e6!1e8!1e12!2m1!1e1!4m1!1i48!5m1!1e1!5m1!1e2!6m1!1e1!6m1!1e2!9m36!1m3!1e2!2b1!3e2!1m3!1e2!2b0!3e3!1m3!1e3!2b1!3e2!1m3!1e3!2b0!3e3!1m3!1e8!2b0!3e3!1m3!1e1!2b0!3e3!1m3!1e4!2b0!3e3!1m3!1e10!2b1!3e2!1m3!1e10!2b0!3e3"
         url = url.format(panoId)
 
@@ -1292,6 +1315,9 @@ class GSV_pano(object):
                     https://geo2.ggpht.com/cbk?cb_client=maps_sv.tactile&authuser=0&hl=en&gl=us&panoid=CJ31ttcx7ez9qcWzoygVqA&output=tile&x=1&y=1&zoom=4&nbt&fover=2
                     Make sure randomly use geo0 - geo3 server.
                     When zoom=4, a panorama image have 6 rows, 13 cols.
+                    Checked 2026-09-29: cb_client=maps_sv.tactile is required (HTTP 403 without it);
+                    nbt=1 returns an error instead of a black tile outside the picture; fover had no
+                    visible effect.
                 """
         try:
             if (str(self.panoId) == str(0)) or (len(self.panoId) < 20):
@@ -1550,6 +1576,9 @@ class GSV_pano(object):
                          pitch=0, yaw=0, fov=90):
         # w maximum: 1024
         # h maximum: 768
+        # Checked 2026-09-29: yaw is a compass direction (0 = north); a POSITIVE pitch looks DOWN
+        # (pitch=40 shows the road, pitch=-40 the sky), the opposite of the Maps JavaScript API;
+        # thumbfov is the field of view (smaller = zoomed in).  Larger w/h are returned as 1024 x 768.
         server_num = random.randint(0, 3)
         lon = round(self.lon, 7)
         lat = round(self.lat, 7)
@@ -1716,8 +1745,10 @@ class GSV_pano(object):
 
         override = True
         for h in heading_list:
+            # Fix (2026-09-29): getImagefrmAngle() has no "override" parameter, so passing override=override
+            # raised TypeError on every call.  (The image size stays 768 x 768 as before.)
             self.getImagefrmAngle(saved_path=saved_path,
-                                   prefix=self.panoId, yaw=pano_yaw_deg + h, fov=fov, height=768, width=768, override=override)
+                                   prefix=self.panoId, yaw=pano_yaw_deg + h, fov=fov, height=768, width=768)
 
     def download_time_machine_jsons(self, saved_path, links=True, oldest_year=2013, json_override=False):
 
@@ -1733,7 +1764,8 @@ class GSV_pano(object):
                    if links:
                        pano.download_pano_json_links(saved_path=saved_path, json_override=json_override)
            except Exception as e:
-               logging.error("Error in extend_pano_json_counts panorama loop:", e)
+               # Fix (2026-09-29): the message had no %s, so the logger printed a "Logging error" instead
+               logging.error("Error in extend_pano_json_counts panorama loop: %s", e)
                print("GSV url:", utils.get_GSV_URL_from_panoId(self.panoId))
 
     def download_pano_json_links(self, saved_path, json_override=False):
@@ -1745,6 +1777,7 @@ class GSV_pano(object):
                 panoId = link['panoId']
                 pano = GSV_pano(panoId=panoId, saved_path=saved_path, json_override=json_override)
             except Exception as e:
-                logging.error("Error in extend_pano_json_counts link loop:", e)
+                # Fix (2026-09-29): the message had no %s, so the logger printed a "Logging error" instead
+                logging.error("Error in extend_pano_json_counts link loop: %s", e)
                 print("GSV url:", utils.get_GSV_URL_from_panoId(self.panoId))
 
