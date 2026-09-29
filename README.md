@@ -1,6 +1,7 @@
 # street_image_mapping
 
-Still being developed, please wait!
+See the paper in:
+Ning, H., Li, Z., Yu, M., & Yin, W. (2026). SIM: a framework for geometric measurement of built environment features using street view imagery. International Journal of Digital Earth, 19(1). https://doi.org/10.1080/17538947.2026.2678084
 
 Street Image Mapping (or SI_mapping) is a universal framework providing toolkit for localizing and measuring objects in street view images (SVI). SI_mapping can automatically measure the street objects' 3D coordinates or size with appropriate parameters or auxiliary data. The current version of SI_mapping provides two pipelines:
 1) [tacheometric surveying](https://en.wikipedia.org/wiki/Tacheometry), i.e., localizing objects which have a known height or width (e.g., stop-sign).
@@ -72,3 +73,5 @@ An example of tree diameter measurement using street view images.
 [Street View Image Foundation Algorithm Library](gsv_pano/README.md)
 
 Please feel free to contact me if you have any questions!
+
+Note: Gooogle Street View image depthmap have mostly replaced by a "fake" flat plain and the camera height (nadir) is replaced using a placeholder of 2.5 meters. A few new camera used in 2025 with 16k panorama width may use the "real" ground depthmap. We will continue watch these changes. -- 2029-09-29
