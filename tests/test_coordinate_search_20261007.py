@@ -1,5 +1,6 @@
 """Coordinate -> panorama ID after Google turned off GeoPhotoService.SingleImageSearch
-(2026-10-05), and the browser-like User-Agent every Google download now needs.
+(2026-10-05), and SIM's own User-Agent: Google refuses the default names of download
+tools (python-requests, Python-urllib, curl ...) on every download.
 
 The fixture is a real answer (2026-10-07) of photometa.search_url() with
 LOCATE_SECTIONS for SIM's test point in Newark, NJ.  Run:  python -m pytest tests -q
@@ -39,7 +40,7 @@ def test_no_photo_within_the_radius():
 
 
 @pytest.mark.parametrize("body", [
-    b"<!DOCTYPE html><html>Error 500 (Server Error)</html>",                       # no browser name
+    b"<!DOCTYPE html><html>Error 500 (Server Error)</html>",                       # a refused tool name
     b'/**/_xdc_._v2mub5 && _xdc_._v2mub5( [[5,"generic","... is decommissioned and turned down."]] )',
     b")]}'\n[[],[[1],[2,\"short\"]],[0.0]]",                                        # no real panorama ID
 ])
@@ -48,7 +49,17 @@ def test_other_answers_are_errors_not_empty_places(body):
         photometa.search_found(body)
 
 
-def test_open_url_sends_a_browser_name(monkeypatch):
+REFUSED_NAMES = ("python-requests", "python-urllib", "curl", "wget", "go-http-client", "java", "okhttp")
+
+
+def test_sim_names_itself_street_view_and_never_a_refused_tool():
+    tag = photometa.HEADERS["User-Agent"]
+    assert "Street View" in tag and "street_image_mapping_v2" in tag
+    assert not any(name in tag.lower() for name in REFUSED_NAMES)
+    assert photometa.BROWSER_HEADERS is photometa.HEADERS          # old name still works
+
+
+def test_open_url_sends_sims_name(monkeypatch):
     import urllib.request
     seen = {}
 
@@ -57,7 +68,7 @@ def test_open_url_sends_a_browser_name(monkeypatch):
         return "file"
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert utils.open_url("https://geo1.ggpht.com/cbk?output=tile") == "file"
-    assert seen["ua"].startswith("Mozilla/5.0") and seen["timeout"] == 60
+    assert seen["ua"] == photometa.HEADERS["User-Agent"] and seen["timeout"] == 60
 
 
 class _Resp:
@@ -95,7 +106,7 @@ def test_getPanoIDfrmLonlat(pano_module, monkeypatch, status, body, expected):
     assert gsv.getPanoIDfrmLonlat(NEWARK[1], NEWARK[0]) == expected
     url, headers = calls[0]
     assert "photometa/si/v1" in url and "!3d40.73031168738437!4d-74.18154077638651" in url
-    assert headers["User-Agent"].startswith("Mozilla/5.0")
+    assert headers == photometa.HEADERS
 
 
 def test_photo_record_is_asked_again_after_a_stripped_answer(pano_module, monkeypatch):
@@ -111,7 +122,7 @@ def test_photo_record_is_asked_again_after_a_stripped_answer(pano_module, monkey
     monkeypatch.setattr(pano_module.time, "sleep", lambda s: None)
     gsv = pano_module.GSV_pano()
     jdata = gsv.getJsonfrmPanoID("kptnDLilHehf76nzhq3m-w", saved_path="", json_override=True)
-    assert len(headers_seen) == 2 and all(h["User-Agent"].startswith("Mozilla/5.0") for h in headers_seen)
+    assert len(headers_seen) == 2 and all(h == photometa.HEADERS for h in headers_seen)
     assert jdata["Location"]["panoId"] == "kptnDLilHehf76nzhq3m-w"
 
 
@@ -119,11 +130,11 @@ def test_photo_record_is_asked_again_after_a_stripped_answer(pano_module, monkey
 def test_live_search_newark_and_nothing_at_sea():
     import requests
     r = requests.get(photometa.search_url(*NEWARK, 50, sections=photometa.LOCATE_SECTIONS),
-                     headers=photometa.BROWSER_HEADERS, timeout=30)
+                     headers=photometa.HEADERS, timeout=30)
     pano_id, lat, lon = photometa.search_found(r.content)
     assert len(pano_id) == 22 and abs(lat - NEWARK[0]) < 5e-4 and abs(lon - NEWARK[1]) < 5e-4
     r = requests.get(photometa.search_url(0.0, -30.0, 50, sections=photometa.LOCATE_SECTIONS),
-                     headers=photometa.BROWSER_HEADERS, timeout=30)
+                     headers=photometa.HEADERS, timeout=30)
     assert photometa.search_found(r.content) is None
 
 

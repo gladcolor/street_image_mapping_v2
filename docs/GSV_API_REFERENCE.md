@@ -28,7 +28,7 @@ Code:
 ```python
 import sys; sys.path.insert(0, "gsv_pano")
 import requests, photometa as g
-H = {"User-Agent": "Mozilla/5.0"}                      # a normal browser name is required
+H = g.HEADERS          # SIM's own name tag; Python's default names are refused (section 7)
 
 rec = g.parse(requests.get(g.request_url("kptnDLilHehf76nzhq3m-w"), headers=H).content)
 rec["pose"], rec["address"], rec["history"], rec["depth_planes"]    # every field by name (section 5)
@@ -48,10 +48,12 @@ Command line:
 
 **Rules:**
 
-- Send a normal browser `User-Agent` (`photometa.BROWSER_HEADERS`,
-  `utils.open_url()`). Python's own name gets HTTP 403 for pictures, HTTP 500
-  for the spot search and an 80-byte stripped record for photo info
-  (2026-10-07).
+- Never send a download tool's default name tag (`User-Agent`). SIM sends
+  `Mozilla/5.0 (Street View; street_image_mapping_v2)` (`photometa.HEADERS`,
+  `utils.open_url()`). Google refuses `python-requests`, `Python-urllib`,
+  `curl` and similar names: HTTP 403 for pictures, HTTP 500 for the spot
+  search and an 80-byte stripped record for photo info (2026-10-07). Any
+  other tag works, even "Street View" alone.
 - Space requests about 1-1.5 s apart.
 - Build URLs with the functions, never by editing the text. A wrong piece
   count gives HTTP 400 (section 2).
@@ -366,9 +368,9 @@ All 44 numbers (`g.LABEL_NAMES`; "?" = likely). The groups are
 | Trap | What happens | Do this |
 |---|---|---|
 | Hand-edited `pb` text | a wrong `!<n>m<k>` count gives HTTP 400 | build with the functions |
-| Headless Chrome's own name ("HeadlessChrome") | empty records, blocked tiles | send a normal browser `User-Agent` |
-| Python's own name (`python-requests`, `Python-urllib`) | HTTP 403 for tiles and flat views, HTTP 500 for the spot search, an 80-byte stripped record for photo info | `photometa.BROWSER_HEADERS` / `utils.open_url()` |
-| Photo info with a browser name | now and then (about 1 in 10 on 2026-10-07) still the 80-byte stripped record: the ID only, no position, date or depth | ask again; `getJsonfrmPanoID()` tries 3 times |
+| Headless Chrome's own name ("HeadlessChrome") | empty records, blocked tiles | send another tag, e.g. `photometa.HEADERS` |
+| A download tool's default name tag, even inside a longer tag: `python-requests`, `Python-urllib`, `curl`, `Wget`, `Go-http-client`, `Java`, `okhttp` | HTTP 403 for tiles and flat views, HTTP 500 for the spot search, an 80-byte stripped record for photo info. Tags such as "Street View", "Python", "my-python-script" or an empty tag work (tested 2026-10-07). | `photometa.HEADERS` / `utils.open_url()` |
+| Photo info with an accepted tag | now and then still the 80-byte stripped record: the ID only, no position, date or depth (1 of about 10 on 2026-10-07; 0 of 30 later the same day) | ask again; `getJsonfrmPanoID()` tries 3 times |
 | Public photo ids (`CIHM0og...`, `CIABIh...`) with photo type 2 | empty answer | use `photo_type="public"`. Tree work skips them anyway: low resolution, no depth map, no labels. |
 | Spot search without a type limit | may return a public photo sphere | `search_url(..., google_only=True)` (the default) |
 | Flat-view `pitch` | positive looks **down** | flip the sign when coming from the Maps JavaScript API |
@@ -464,15 +466,15 @@ The stored depth maps are byte-for-byte the same.
 
 Google turned off `GeoPhotoService.SingleImageSearch` on 2026-10-05 (answer:
 "... is decommissioned and turned down"). Every coordinate -> panorama lookup
-in SIM failed. At the same time, SIM's downloads without a browser name failed
-too (section 7).
+in SIM failed. At the same time, SIM's downloads with Python's default name
+tags failed too (section 7).
 
 | Where | Change |
 |---|---|
 | `GSV_pano.getPanoIDfrmLonlat()` | Uses Google Maps' own spot search: `photometa.search_url(lat, lon, 50, sections=LOCATE_SECTIONS)`, read by `photometa.search_found()`. Same 50 m hard limit, Google's own photos only, same return value `(panoId, lon, lat)` or `(0, 0, 0)`. The answer is about 650 bytes instead of about 480 KB. |
-| `GSV_pano.getJsonfrmPanoID()` | Sends `BROWSER_HEADERS`; asks up to 3 times while the answer is the 80-byte stripped record. |
-| `GSV_pano.download_panorama()` (tiles), `getImagefrmAngle()`, `utils` flat views | Download with `utils.open_url()` (browser name, 60 s timeout). |
-| `photometa.py` | New `LOCATE_SECTIONS`, `BROWSER_HEADERS` and `search_found()`. |
+| `GSV_pano.getJsonfrmPanoID()` | Sends `HEADERS`; asks up to 3 times while the answer is the 80-byte stripped record. |
+| `GSV_pano.download_panorama()` (tiles), `getImagefrmAngle()`, `utils` flat views | Download with `utils.open_url()` (SIM's name tag, 60 s timeout). |
+| `photometa.py` | New `LOCATE_SECTIONS`, `HEADERS` and `search_found()`. `HEADERS` = `{"User-Agent": "Mozilla/5.0 (Street View; street_image_mapping_v2)"}`: an honest name instead of a copied Chrome name, tested equal on the search, photo info, tiles and flat views. `BROWSER_HEADERS` is kept as its old name. |
 
 Tests: `tests/test_coordinate_search_20261007.py`, offline from a real answer
 (`tests/fixtures/search_newark_locate.txt`). The live checks run with

@@ -31,13 +31,14 @@ logging.shutdown()
 
 
 def open_url(url, timeout=60):
-    """urllib.request.urlopen() with a browser-like User-Agent.  Google refuses
-    Python's own name (tested 2026-10-07): HTTP 403 for tiles and flat views,
-    HTTP 500 for the coordinate search, and a stripped record (no position,
-    date or depth) for photometa."""
+    """urllib.request.urlopen() with SIM's own name tag (photometa.HEADERS).
+    Google refuses urllib's default name "Python-urllib/3.x" (tested
+    2026-10-07): HTTP 403 for tiles and flat views, HTTP 500 for the
+    coordinate search, and a stripped record (no position, date or depth) for
+    photometa."""
     import urllib.request
-    from photometa import BROWSER_HEADERS
-    return urllib.request.urlopen(urllib.request.Request(url, headers=BROWSER_HEADERS), timeout=timeout)
+    from photometa import HEADERS
+    return urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=timeout)
 
 
 def refactorJson(jdata):

@@ -205,8 +205,8 @@ class GSV_pano(object):
         import photometa
         url = photometa.search_url(lat, lon, 50, sections=photometa.LOCATE_SECTIONS)
         try:
-            # a browser-like User-Agent is required: without one Google answers HTTP 500
-            resp = requests.get(url, headers=photometa.BROWSER_HEADERS, proxies=None, timeout=30)
+            # SIM's own name tag: with python-requests' default name Google answers HTTP 500
+            resp = requests.get(url, headers=photometa.HEADERS, proxies=None, timeout=30)
             resp.raise_for_status()
             found = photometa.search_found(resp.content)
         except Exception as e:
@@ -264,12 +264,12 @@ class GSV_pano(object):
         url = url.format(panoId)
 
         try:
-            # A browser-like User-Agent is required: without one the answer is always a stripped
-            # record (~80 bytes: the ID only, no position, date or depth).  With one, Google still
-            # sends the stripped record now and then (about 1 in 10 on 2026-10-07), so ask again.
+            # SIM's own name tag (photometa.HEADERS): with python-requests' default name the answer
+            # is always a stripped record (~80 bytes: the ID only, no position, date or depth).
+            # Google still sends the stripped record now and then, so ask again.
             import photometa
             for attempt in range(3):
-                resp = requests.get(url, headers=photometa.BROWSER_HEADERS, proxies=None, timeout=60)
+                resp = requests.get(url, headers=photometa.HEADERS, proxies=None, timeout=60)
                 if len(resp.content) > 1000:
                     break
                 time.sleep(1 + attempt)

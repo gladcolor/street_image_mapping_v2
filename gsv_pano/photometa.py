@@ -128,10 +128,14 @@ SEARCH_ENDPOINT = "https://www.google.com/maps/photometa/si/v1?authuser=0&hl=en&
 # "image" brings the panorama ID (m[1][1]) and "unknown_4" the position
 # (m5[1]); about 650 bytes instead of about 360 KB with SIM_SECTIONS.
 LOCATE_SECTIONS = ("image", "unknown_4")
-# Google answers HTTP 500 to requests without a browser-like User-Agent
-# (python-requests' own name fails; tested 2026-10-07).
-BROWSER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                 "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
+# The name tag (User-Agent) SIM sends.  Google refuses the default names of
+# download tools, even inside a longer tag: python-requests, Python-urllib,
+# curl, Wget, Go-http-client, Java, okhttp (tested 2026-10-07: HTTP 403 for
+# tiles and flat views, HTTP 500 for the spot search, an 80-byte stripped
+# record for photo info).  Any other tag works, so SIM names itself honestly
+# instead of pretending to be a browser.
+HEADERS = {"User-Agent": "Mozilla/5.0 (Street View; street_image_mapping_v2)"}
+BROWSER_HEADERS = HEADERS      # old name (230ec13)
 
 
 def search_url(lat: float, lon: float, radius_m: float = 50, sections=SIM_SECTIONS, google_only: bool = True,
@@ -375,7 +379,7 @@ def summary(rec: dict) -> dict:
 
 def fetch(pano_id: str, **kw) -> bytes:
     import requests
-    r = requests.get(request_url(pano_id, **kw), headers=BROWSER_HEADERS, timeout=30)
+    r = requests.get(request_url(pano_id, **kw), headers=HEADERS, timeout=30)
     r.raise_for_status()
     return r.content
 
