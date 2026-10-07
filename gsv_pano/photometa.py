@@ -44,7 +44,7 @@ SECTIONS = {
     "image": 1,            # m[2]: image size, tile size, zoom levels
     "capture": 2,          # m[3] address, m[6] status/source/date (and neighbour addresses)
     "attribution": 3,      # m[4]: copyright, uploader name, link and picture
-    "unknown_4": 4,        # no visible effect on outdoor Google photos
+    "unknown_4": 4,        # coordinate search: adds m5[1], the photo's position (tested 2026-10-07); else no visible effect
     "places": 5,           # m5[9]: nearby places (also needs places_flag)
     "surroundings": 6,     # m5[3] neighbours, m5[5] pictures, m5[6] links, m5[8] history
     "street_names": 8,     # m5[12]: street names and road bearings
@@ -124,6 +124,14 @@ def request_url(pano_id: str, sections=SIM_SECTIONS, depth_kinds=DEPTH_KINDS, na
 
 
 SEARCH_ENDPOINT = "https://www.google.com/maps/photometa/si/v1?authuser=0&hl=en&gl=us&pb="
+# The shortest coordinate search that still gives the found photo's position:
+# "image" brings the panorama ID (m[1][1]) and "unknown_4" the position
+# (m5[1]); about 650 bytes instead of about 360 KB with SIM_SECTIONS.
+LOCATE_SECTIONS = ("image", "unknown_4")
+# Google answers HTTP 500 to requests without a browser-like User-Agent
+# (python-requests' own name fails; tested 2026-10-07).
+BROWSER_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                 "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"}
 
 
 def search_url(lat: float, lon: float, radius_m: float = 50, sections=SIM_SECTIONS, google_only: bool = True,
@@ -192,6 +200,27 @@ def load_answer(body) -> list:
     if len(a) > 1 and is_photo(a[1]):
         return a[1]
     return a[1][0]
+
+
+def search_found(body):
+    """(pano_id, lat, lon) of a :func:`search_url` answer, or None when no
+    photo is within the radius (the 13-byte answer ``)]}'`` + ``[[5],[]]``).
+    lat/lon are None unless the request asked for section "unknown_4".
+    Raises ValueError on any other answer (an error page, a shutdown message),
+    so an outage is never mistaken for a place without photos."""
+    text = body.decode("utf-8", "surrogateescape") if isinstance(body, (bytes, bytearray)) else body
+    start = text.find("[")
+    if not text.lstrip().startswith(")]}'") or start < 0:
+        raise ValueError(f"not a coordinate-search answer: {text[:120]!r}")
+    a = json.loads(text[start:])
+    if isinstance(a, list) and len(a) > 1 and a[1] == []:
+        return None
+    m = load_answer(text)
+    pano_id = _dig(m, 1, 1)
+    if not isinstance(pano_id, str) or len(pano_id) < 20:
+        raise ValueError(f"no panorama ID in the coordinate-search answer: {text[:120]!r}")
+    pos = _dig(m, 5, 0, 1, 0) or []
+    return pano_id, _dig(pos, 2), _dig(pos, 3)
 
 
 def _pose(block) -> dict:
@@ -346,9 +375,7 @@ def summary(rec: dict) -> dict:
 
 def fetch(pano_id: str, **kw) -> bytes:
     import requests
-    ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/126.0 Safari/537.36"}
-    r = requests.get(request_url(pano_id, **kw), headers=ua, timeout=30)
+    r = requests.get(request_url(pano_id, **kw), headers=BROWSER_HEADERS, timeout=30)
     r.raise_for_status()
     return r.content
 

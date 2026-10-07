@@ -77,12 +77,16 @@ def test_unchanged_fields(raw):
 
 class _Resp:
     def __init__(self, text):
-        self.text = text
+        self.text, self.content, self.status_code = text, text.encode(), 200
+
+    def raise_for_status(self):
+        pass
 
 
 def test_search_bad_answer_logs_the_real_error(monkeypatch, caplog):
     import pano
-    bad = "/**/_xdc_._v2mub5 && _xdc_._v2mub5( " + "[" * 600 + "x" * 600 + " )"   # long but not JSON
+    # 2026-10-07: the search is Google's photometa/si now (SingleImageSearch was turned off)
+    bad = ")]}'\n" + "[" * 600 + "x" * 600                                         # long but not JSON
     monkeypatch.setattr(pano.requests, "get", lambda *a, **k: _Resp(bad))
     obj = pano.GSV_pano.__new__(pano.GSV_pano)
     with caplog.at_level(logging.ERROR):

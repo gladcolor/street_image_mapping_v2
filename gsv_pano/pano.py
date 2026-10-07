@@ -196,36 +196,28 @@ class GSV_pano(object):
 
 
     def getPanoIDfrmLonlat(self, lon, lat):
-        # "pb" = a nested request flattened as !<field><type><value> (m = group of the next k pieces,
-        # s = text, e = choice, b = yes/no, d = decimal); see docs/GSV_API_REFERENCE.md.  Here:
-        # !3d/!4d = latitude/longitude; !2d50 = search radius in metres (a hard limit: nothing within it
-        # = no photo); !11m4!1m3!1e2... = photo types allowed (2 = Google's own; adding type 3 or 10 would
-        # also return photo spheres uploaded by the public); !4m10!1e1... = which blocks of the record to
-        # send.  The answer already holds the full photo record.
-        url = "https://maps.googleapis.com/maps/api/js/GeoPhotoService.SingleImageSearch?pb=!1m5!1sapiv3!5sUS!11m2!1m1!1b0!2m4!1m2!3d{0:}!4d{1:}!2d50!3m10!2m2!1sen!2sGB!9m1!1e2!11m4!1m3!1e2!2b1!3e2!4m10!1e1!1e2!1e3!1e4!1e8!1e6!5m1!1e2!6m1!1e2&callback=_xdc_._v2mub5"
-        
-        url = url.format(lat, lon)
-        # print("url in getPanoIDfrmLonlat():", url)
-        resp = requests.get(url, proxies=None)
-        # print("url in getPanoIDfrmLonlat():", url)
-        line = resp.text.replace("/**/_xdc_._v2mub5 && _xdc_._v2mub5( ", "")[:-2]
-        # print("line: "  , line)
+        # Google Maps' own coordinate search (photometa/si, built by photometa.search_url): the newest
+        # Google photo within 50 m of (lat, lon); 50 m is a hard limit (nothing within it = no photo).
+        # Photo spheres uploaded by the public are left out.  Only the panorama ID and its position are
+        # asked for (photometa.LOCATE_SECTIONS, ~650 bytes).  The old address,
+        # GeoPhotoService.SingleImageSearch, was turned off by Google on 2026-10-05.
+        # Returns (panoId, lon, lat), or (0, 0, 0) when there is no photo or the request fails.
+        import photometa
+        url = photometa.search_url(lat, lon, 50, sections=photometa.LOCATE_SECTIONS)
+        try:
+            # a browser-like User-Agent is required: without one Google answers HTTP 500
+            resp = requests.get(url, headers=photometa.BROWSER_HEADERS, proxies=None, timeout=30)
+            resp.raise_for_status()
+            found = photometa.search_found(resp.content)
+        except Exception as e:
+            logging.exception("Error in getPanoIDfrmLonlat(): %s", e)
+            return 0, 0, 0
 
-        if len(line) > 1000:
-            try:
-                jdata = json.loads(line)
-                # print("jdata: ", jdata)
-                panoId = jdata[1][1][1]
-                pano_lon = jdata[1][5][0][1][0][3]
-                pano_lat = jdata[1][5][0][1][0][2]
-                return panoId, pano_lon, pano_lat
-            except Exception as e:  # Fix (2026-09-29): was a bare "except:", so "e" was math.e (from "from math import *") and the log showed 2.718... instead of the error
-                logging.exception("Error in getPanoIDfrmLonlat(): %s", e)
-                return 0, 0, 0
-
-        else:  # if there is no panorama
+        if found is None:  # if there is no panorama
             logging.info("Found no panorama in getPanoIDfrmLonlat(): lon: %f, lat: %f", lon, lat)
             return 0, 0, 0
+        panoId, pano_lat, pano_lon = found
+        return panoId, pano_lon, pano_lat
 
 
     def getPanoJsonfrmLonat(self, lon, lat):
@@ -272,7 +264,15 @@ class GSV_pano(object):
         url = url.format(panoId)
 
         try:
-            resp = requests.get(url, proxies=None)
+            # A browser-like User-Agent is required: without one the answer is always a stripped
+            # record (~80 bytes: the ID only, no position, date or depth).  With one, Google still
+            # sends the stripped record now and then (about 1 in 10 on 2026-10-07), so ask again.
+            import photometa
+            for attempt in range(3):
+                resp = requests.get(url, headers=photometa.BROWSER_HEADERS, proxies=None, timeout=60)
+                if len(resp.content) > 1000:
+                    break
+                time.sleep(1 + attempt)
             line = resp.text.replace(")]}'\n", "")
             try:
                 jdata = json.loads(line)
@@ -1347,7 +1347,7 @@ class GSV_pano(object):
                     url = 'https://geo' + str(
                         num) + '.ggpht.com/cbk?cb_client=maps_sv.tactile&authuser=0&hl=en&gl=us&panoid=' + self.panoId + '&output=tile&x=' + str(
                         x) + '&y=' + str(y) + '&zoom=' + zoom + '&nbt&fover=2'
-                    file = urllib.request.urlopen(url)
+                    file = utils.open_url(url)
                     image = Image.open(file)
                     if image.size != (tile_width, tile_width):
                         image = image.resize((tile_width, tile_height))
@@ -1605,7 +1605,7 @@ class GSV_pano(object):
             suffix = '_' + suffix
 
         try:
-            file = urllib.request.urlopen(url1)
+            file = utils.open_url(url1)
             image = Image.open(file)
 
             # new_name = f"{prefix}{}_{}_{}{}{}"

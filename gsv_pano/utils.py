@@ -29,6 +29,17 @@ logging.basicConfig(filename="info.log", level=logging.INFO, format="%(asctime)s
 
 logging.shutdown()
 
+
+def open_url(url, timeout=60):
+    """urllib.request.urlopen() with a browser-like User-Agent.  Google refuses
+    Python's own name (tested 2026-10-07): HTTP 403 for tiles and flat views,
+    HTTP 500 for the coordinate search, and a stripped record (no position,
+    date or depth) for photometa."""
+    import urllib.request
+    from photometa import BROWSER_HEADERS
+    return urllib.request.urlopen(urllib.request.Request(url, headers=BROWSER_HEADERS), timeout=timeout)
+
+
 def refactorJson(jdata):
     # jdata is the "photometa" answer: nested lists without field names; the record is m = jdata[1][0]
     # and m5 = m[5][0].  Every position used below is explained in docs/GSV_API_REFERENCE.md
@@ -820,7 +831,7 @@ def get_around_thumbnail_from_bearing(lon=0.0, lat=0.0,
                     print("Skip existing file:", jpg_name)
                     continue
 
-            file = urllib.request.urlopen(url1)
+            file = open_url(url1)
             image = Image.open(file)
 
             # new_name = f"{prefix}{}_{}_{}{}{}"

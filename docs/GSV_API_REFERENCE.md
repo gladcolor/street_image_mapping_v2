@@ -48,7 +48,10 @@ Command line:
 
 **Rules:**
 
-- Send a normal browser `User-Agent`.
+- Send a normal browser `User-Agent` (`photometa.BROWSER_HEADERS`,
+  `utils.open_url()`). Python's own name gets HTTP 403 for pictures, HTTP 500
+  for the spot search and an 80-byte stripped record for photo info
+  (2026-10-07).
 - Space requests about 1-1.5 s apart.
 - Build URLs with the functions, never by editing the text. A wrong piece
   count gives HTTP 400 (section 2).
@@ -83,13 +86,13 @@ Below, "part 4.2.1" means field 1 inside field 2 inside field 4.
 | **Photo info** | `https://www.google.com/maps/photometa/v1?authuser=0&hl=en&pb=...` | full record, ~360 KB text (13-19 KB as sent) | `g.request_url(pano_id, ...)`; SIM: `GSV_pano.getJsonfrmPanoID()` |
 | **Labels only** | same address, part 18 only | ~4 KB | `g.labels_url(pano_id)` |
 | **Spot search** (Google's page) | `https://www.google.com/maps/photometa/si/v1?authuser=0&hl=en&gl=us&pb=...` | `[[], record, [bearing]]` | `g.search_url(lat, lon, radius_m, ...)` |
-| Spot search (SIM) | `https://maps.googleapis.com/maps/api/js/GeoPhotoService.SingleImageSearch?pb=...&callback=_xdc_._x` | JSONP-wrapped record (~480 KB) | `GSV_pano.getPanoIDfrmLonlat()` |
+| ~~Spot search (old SIM)~~ | `https://maps.googleapis.com/maps/api/js/GeoPhotoService.SingleImageSearch?pb=...&callback=_xdc_._x` | **turned off by Google on 2026-10-05** ("decommissioned and turned down"); `GSV_pano.getPanoIDfrmLonlat()` now uses the spot search above (section 11) | |
 | **Panorama tile** | `https://streetviewpixels-pa.googleapis.com/v1/tile?cb_client=maps_sv.tactile&panoid=ID&x=X&y=Y&zoom=Z&nbt=1&fover=2` | 512 x 512 JPEG | |
 | **Flat view** | `https://streetviewpixels-pa.googleapis.com/v1/thumbnail?cb_client=maps_sv.tactile&panoid=ID&w=W&h=H&yaw=YAW&pitch=P&thumbfov=FOV` | JPEG, up to 1024 x 768 | |
 | Old image forms (SIM) | `https://geo{0-3}.ggpht.com/cbk?cb_client=maps_sv.tactile&output=tile` / `&output=thumbnail` | same pictures (identical bytes) | `download_panorama()`, `getImagefrmAngle()` |
 
 `g.parse()` reads all three record shapes: photo info, the page's spot
-search and SIM's JSONP spot search.
+search and SIM's old JSONP spot search (saved answers only; it is turned off).
 
 Google Maps itself also downloads several things we don't need:
 
@@ -128,7 +131,7 @@ The blocks chosen by part 4.1:
 | 1 | `image` | `m[2]` image and tile sizes |
 | 2 | `capture` | `m[3]` camera address, `m[6]` status, source and date |
 | 3 | `attribution` | `m[4]` copyright and uploader |
-| 4 | `unknown_4` | nothing visible |
+| 4 | `unknown_4` | spot search: `m5[1]`, the found photo's position (2026-10-07); photo info: nothing visible |
 | 5 | `places` | `m5[9]` nearby places |
 | 6 | `surroundings` | `m5[3]` neighbours, `m5[5]` depth + click-to-go maps, `m5[6]` road links, `m5[8]` history. **Without it the record is 2.6 KB.** |
 | 8 | `street_names` | `m5[12]` street names and road directions |
@@ -149,7 +152,12 @@ Neither adds anything.
 | 3.2 | `en` / `us` | language, region | `language`, `region` |
 | 3.9.1 | 2 | changes which photo is picked (1 gave a different photo; 3 = 2); rule unknown | |
 | 3.11 | (2, yes, 2), (3, yes, 2) | **photo types allowed in the answer**: 2 = Google's own; 3 or 10 also allow public photo spheres | `google_only=True` keeps only 2 |
-| 4 | | same as photo info part 4 | `sections`, ... |
+| 4 | | same as photo info part 4; `("image", "unknown_4")` = the panorama ID and its position only, about 650 bytes | `sections` (`LOCATE_SECTIONS`), ... |
+
+`search_found(body)` reads an answer: `(pano_id, lat, lon)`, None for the
+13-byte "nothing within the radius" answer, and ValueError for anything else
+(an error page, a shutdown message), so an outage is never taken for a place
+without photos.
 
 The number in `[[], record, [bearing]]` is the **compass direction from the
 found photo toward the searched point**. It was within about 1 degree at
@@ -359,6 +367,8 @@ All 44 numbers (`g.LABEL_NAMES`; "?" = likely). The groups are
 |---|---|---|
 | Hand-edited `pb` text | a wrong `!<n>m<k>` count gives HTTP 400 | build with the functions |
 | Headless Chrome's own name ("HeadlessChrome") | empty records, blocked tiles | send a normal browser `User-Agent` |
+| Python's own name (`python-requests`, `Python-urllib`) | HTTP 403 for tiles and flat views, HTTP 500 for the spot search, an 80-byte stripped record for photo info | `photometa.BROWSER_HEADERS` / `utils.open_url()` |
+| Photo info with a browser name | now and then (about 1 in 10 on 2026-10-07) still the 80-byte stripped record: the ID only, no position, date or depth | ask again; `getJsonfrmPanoID()` tries 3 times |
 | Public photo ids (`CIHM0og...`, `CIABIh...`) with photo type 2 | empty answer | use `photo_type="public"`. Tree work skips them anyway: low resolution, no depth map, no labels. |
 | Spot search without a type limit | may return a public photo sphere | `search_url(..., google_only=True)` (the default) |
 | Flat-view `pitch` | positive looks **down** | flip the sign when coming from the Maps JavaScript API |
@@ -449,3 +459,22 @@ except for two things:
   entries are unchanged and the lost ones are added after them.
 
 The stored depth maps are byte-for-byte the same.
+
+## 11. Changes on 2026-10-07: the old spot search is gone
+
+Google turned off `GeoPhotoService.SingleImageSearch` on 2026-10-05 (answer:
+"... is decommissioned and turned down"). Every coordinate -> panorama lookup
+in SIM failed. At the same time, SIM's downloads without a browser name failed
+too (section 7).
+
+| Where | Change |
+|---|---|
+| `GSV_pano.getPanoIDfrmLonlat()` | Uses Google Maps' own spot search: `photometa.search_url(lat, lon, 50, sections=LOCATE_SECTIONS)`, read by `photometa.search_found()`. Same 50 m hard limit, Google's own photos only, same return value `(panoId, lon, lat)` or `(0, 0, 0)`. The answer is about 650 bytes instead of about 480 KB. |
+| `GSV_pano.getJsonfrmPanoID()` | Sends `BROWSER_HEADERS`; asks up to 3 times while the answer is the 80-byte stripped record. |
+| `GSV_pano.download_panorama()` (tiles), `getImagefrmAngle()`, `utils` flat views | Download with `utils.open_url()` (browser name, 60 s timeout). |
+| `photometa.py` | New `LOCATE_SECTIONS`, `BROWSER_HEADERS` and `search_found()`. |
+
+Tests: `tests/test_coordinate_search_20261007.py`, offline from a real answer
+(`tests/fixtures/search_newark_locate.txt`). The live checks run with
+`SIM_LIVE=1 python -m pytest tests -q -k live`: coordinates -> panorama ID ->
+full record -> flat view.
