@@ -480,3 +480,20 @@ Tests: `tests/test_coordinate_search_20261007.py`, offline from a real answer
 (`tests/fixtures/search_newark_locate.txt`). The live checks run with
 `SIM_LIVE=1 python -m pytest tests -q -k live`: coordinates -> panorama ID ->
 full record -> flat view.
+
+## 12. `get_DOM()` fixes on 2026-10-08
+
+Not caused by Google: found while testing every SIM feature after section 11.
+
+| Bug | Fix |
+|---|---|
+| Raised an error unless `set_segmentation_path()` was called, even for a colour DOM (it only took the file extension from that path). | Only `img_type="segmentation"` needs it, and then fails with a clear message. A colour DOM is saved as `.tif`, or with the segmentation picture's extension when one is set (as before). |
+| Raised an error without `crs_local` (also `get_DEM()`). | New `GSV_pano.local_crs()`: `crs_local` if given, else the photo's UTM zone (`utils.utm_epsg()`, e.g. 32618 New York, 32617 Columbia SC). Only the world files use it. |
+| A second call with another resolution returned None. | The in-memory DOM is reused only for the same width, height, resolution, zoom and type. |
+| Colour and segmentation DOMs shared one file name, so a saved one of the other kind could be returned. | A saved file is used only if it is the requested kind (3 channels = colour, 1 = segmentation). The other kind is saved as `{panoId}_DOM_{img_type}_{resolution}.{ext}`, never over it. |
+
+Tests: `tests/test_get_DOM_20261008.py`, offline (a real record and a synthetic
+panorama). The geometry check: under the camera the DOM takes its colours from
+the bottom of the panorama, 14 m away from just below the horizon. Live
+(Columbia SC, `4mcE_aZ6Xqg3lvHjIYxZfA`): 400 x 400 colour DOM at 0.1 m with no
+setup, world file in UTM 17N.

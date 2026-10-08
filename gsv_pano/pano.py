@@ -569,7 +569,7 @@ class GSV_pano(object):
 
         dem_refined = dem_refined + elevation_egm96_m # + camera_height
 
-        transformer = utils.epsg_transform(4326, self.crs_local)  # New Jersey state plane, meter
+        transformer = utils.epsg_transform(4326, self.local_crs())  # local metric map (crs_local, else UTM)
         x_m, y_m = transformer.transform(self.lat, self.lon)
 
 
@@ -617,7 +617,7 @@ class GSV_pano(object):
             else:
                 np_image = np.zeros((h, w, channels))
 
-            transformer = utils.epsg_transform(4326, self.crs_local)  # New Jersey state plane, meter
+            transformer = utils.epsg_transform(4326, self.local_crs())  # local metric map (crs_local, else UTM)
             x_m, y_m = transformer.transform(self.lat, self.lon)
 
             np_image[rows, cols] = pixels
@@ -683,7 +683,7 @@ class GSV_pano(object):
 
             # self.DEM['colors'] = colors
             self.DEM['resolution'] = resolution
-            transformer = utils.epsg_transform(4326, self.crs_local)  # New Jersey state plane, meter
+            transformer = utils.epsg_transform(4326, self.local_crs())  # local metric map (crs_local, else UTM)
             elevation_egm96_m = self.jdata['Location']['elevation_egm96_m']
             self.DEM['DEM'] = np.array(Image.open(new_name)) #  - elevation_egm96_m
 
@@ -866,6 +866,18 @@ class GSV_pano(object):
     def set_segmentation_path(self, full_path):
         self.segmenation['full_path'] = full_path
 
+    def local_crs(self):
+        """EPSG code of the local metric map used to place DEM/DOM rasters
+        (their world files).  crs_local when it was given; otherwise the UTM
+        zone of the photo (utils.utm_epsg), which is then kept in crs_local.
+        Fix (2026-10-08): without crs_local, get_DEM()/get_DOM() raised an error."""
+        if self.crs_local is None:
+            if self.lat is None or self.lon is None:
+                raise ValueError("no crs_local and no photo position to choose a UTM zone")
+            self.crs_local = utils.utm_epsg(self.lon, self.lat)
+            logging.info("crs_local not given for %s: using UTM EPSG:%d", self.panoId, self.crs_local)
+        return self.crs_local
+
 
     def get_pixel_from_row_col(self, arr_col, arr_row, zoom=4, img_type="pano", fill_clipped_seg=False):
         '''
@@ -999,25 +1011,58 @@ class GSV_pano(object):
 
     def get_DOM(self, width = 40, height = 40, resolution=0.03, zoom=3, img_type="DOM", fill_clipped_seg=False):  # return: numpy array,
         """
-        :param width:
-        :param height:
-        :param resolution:
-        :param zoom:
-        :param type: DOM or segmentation
-        :return:
+        Top-down image of the ground around the camera, width x height metres.
+        :param width, height: metres
+        :param resolution: metres per pixel
+        :param zoom: panorama zoom level the colours are taken from
+        :param img_type: "DOM" = colours from the panorama; "segmentation" = class
+            values from the picture set by set_segmentation_path()
+        :return: self.DOM (self.DOM['DOM'] = the image), or None if it cannot be made
+
+        Saved in saved_path as {panoId}_DOM_{resolution}.{ext} with a world file
+        (ext = the segmentation picture's extension, else "tif").
+        Fix (2026-10-08):
+        - img_type="DOM" no longer needs a segmentation picture or crs_local
+          (default: the UTM zone of the photo, see local_crs());
+        - a saved file is used only if it is the requested kind (colour = 3
+          channels, segmentation = 1 channel); the other kind is saved as
+          {panoId}_DOM_{img_type}_{resolution}.{ext} instead of overwriting it;
+        - a second call with other settings computes again (it returned None).
         """
-        street_img_ext = self.segmenation['full_path'][-3:]
-        new_name = os.path.join(self.saved_path, self.panoId + f"_DOM_{resolution:.2f}.{street_img_ext}")
-        worldfile_name = new_name[:-3] + street_img_ext[0] + street_img_ext[2] + 'w'
+        if img_type not in ("DOM", "segmentation"):
+            raise ValueError(f"img_type must be 'DOM' or 'segmentation', not {img_type!r}")
+        seg_path = self.segmenation['full_path']
+        if img_type == "segmentation" and not seg_path:
+            raise ValueError("img_type='segmentation' needs set_segmentation_path() first")
+        key = (width, height, resolution, zoom, img_type, fill_clipped_seg)
+        if self.DOM['DOM'] is not None and self.DOM.get('key') == key:
+            return self.DOM
+
+        street_img_ext = seg_path[-3:] if seg_path else "tif"
+        shared_name = os.path.join(self.saved_path, self.panoId + f"_DOM_{resolution:.2f}.{street_img_ext}")
+        typed_name = os.path.join(self.saved_path, self.panoId + f"_DOM_{img_type}_{resolution:.2f}.{street_img_ext}")
         self.DOM['resolution'] = resolution
-        transformer = utils.epsg_transform(4326, self.crs_local)  # New Jersey state plane, meter
+        transformer = utils.epsg_transform(4326, self.local_crs())  # local metric map (crs_local, else UTM)
 
         x_m, y_m = transformer.transform(self.lat, self.lon)
         self.DOM['central_x'] = x_m
         self.DOM['central_y'] = y_m
 
-        if os.path.exists(new_name):
-            self.DOM['DOM'] = np.array(Image.open(new_name))
+        channels_wanted = 3 if img_type == "DOM" else 2      # array dimensions: colour (h, w, 3), class (h, w)
+        saved = None
+        for name in (shared_name, typed_name):
+            if os.path.exists(name):
+                arr = np.array(Image.open(name))
+                if arr.ndim == channels_wanted:
+                    saved = arr
+                    break
+        # A new picture goes to the shared name unless that file holds the other kind.
+        new_name = shared_name if not os.path.exists(shared_name) else typed_name
+        worldfile_name = new_name[:-3] + street_img_ext[0] + street_img_ext[2] + 'w'
+
+        if saved is not None:
+            self.DOM['DOM'] = saved
+            self.DOM['key'] = key
             # self.DOM["DOM_points"] = self.get_DOM_points(width=width,
             #                                              height=height,
             #                                              resolution=resolution,
@@ -1033,7 +1078,7 @@ class GSV_pano(object):
 
             return self.DOM
 
-        if (self.DOM['DOM'] is None) or (self.DOM['resolution'] != resolution):
+        if (self.DOM['DOM'] is None) or (self.DOM.get('key') != key):
             try:
                 if self.jdata is None:
                     logging.info("Jdata is None: %s.", self.panoId)
@@ -1047,6 +1092,7 @@ class GSV_pano(object):
                                           img_type=img_type,
                                           fill_clipped_seg=fill_clipped_seg
                                           )
+                self.DOM['key'] = key
 
                 # Image.fromarray(self.DOM['DOM']).convert(("RGB")).show()
                 # show wrong results

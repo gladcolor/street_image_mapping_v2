@@ -535,6 +535,16 @@ def epsg_transform(in_epsg, out_epsg):
     # print(crs_local)
     return Transformer.from_crs(in_epsg, out_epsg)
 
+
+def utm_epsg(lon, lat):
+    """EPSG code of the WGS 84 UTM zone at (lon, lat), in metres: 326xx north of
+    the equator, 327xx south (e.g. New York 32618, Columbia SC 32617).  The
+    standard 6-degree zones; the Norway/Svalbard exceptions are ignored, which
+    only shifts the map to a neighbouring zone."""
+    zone = int((float(lon) + 180.0) // 6.0) % 60 + 1
+    return (32600 if float(lat) >= 0 else 32700) + zone
+
+
 def sort_pano_jsons(json_dir, saved_path=''):
     files = glob.glob(os.path.join(json_dir, "*.json"))[:]
     panoIds = [os.path.basename(f)[:-5] for f in files]
